@@ -494,6 +494,74 @@ def assign_faculty_subject(faculty_id, subject_id, section):
     finally:
         conn.close()
 
+def delete_student(student_id):
+    conn = get_connection()
+    try:
+        # Delete attendance records first
+        conn.execute("""DELETE FROM attendance WHERE student_id=?""", (student_id,))
+        user_id = conn.execute("SELECT user_id FROM students WHERE id=?", (student_id,)).fetchone()
+        conn.execute("DELETE FROM students WHERE id=?", (student_id,))
+        if user_id:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id[0],))
+        conn.commit()
+        return True, "Student deleted"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+def delete_faculty(faculty_id):
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM faculty_subjects WHERE faculty_id=?", (faculty_id,))
+        user_id = conn.execute("SELECT user_id FROM faculty WHERE id=?", (faculty_id,)).fetchone()
+        conn.execute("DELETE FROM faculty WHERE id=?", (faculty_id,))
+        if user_id:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id[0],))
+        conn.commit()
+        return True, "Faculty deleted"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+def delete_subject(subject_id):
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM faculty_subjects WHERE subject_id=?", (subject_id,))
+        # delete attendance for sessions of this subject
+        sessions = conn.execute("SELECT id FROM attendance_sessions WHERE subject_id=?", (subject_id,)).fetchall()
+        for s in sessions:
+            conn.execute("DELETE FROM attendance WHERE session_id=?", (s[0],))
+        conn.execute("DELETE FROM attendance_sessions WHERE subject_id=?", (subject_id,))
+        conn.execute("DELETE FROM subjects WHERE id=?", (subject_id,))
+        conn.commit()
+        return True, "Subject deleted"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+def delete_assignment(fs_id):
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM faculty_subjects WHERE id=?", (fs_id,))
+        conn.commit()
+        return True, "Assignment removed"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+def update_session_topic(session_id, topic):
+    conn = get_connection()
+    conn.execute("UPDATE attendance_sessions SET topic=? WHERE id=?", (topic, session_id))
+    conn.commit()
+    conn.close()
+
 def get_student_detailed_attendance(student_id, subject_id):
     conn = get_connection()
     rows = conn.execute("""

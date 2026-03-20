@@ -6,243 +6,221 @@ from database import (
     get_faculty_subjects, get_students_for_subject, get_faculty_id,
     session_exists, create_attendance_session, mark_attendance,
     get_attendance_for_session, get_subject_attendance_summary,
-    get_sessions_for_subject
+    get_sessions_for_subject, update_session_topic
 )
 
-COLORS = {
-    "accent": "#6366f1", "accent2": "#8b5cf6",
-    "success": "#10b981", "warning": "#f59e0b", "danger": "#ef4444",
-    "bg": "#111827", "bg2": "#1a2236", "text": "#f1f5f9", "text2": "#94a3b8"
+C = {
+    "text": "#1a1a1a", "text2": "#5a5652", "muted": "#8a8680",
+    "success": "#2d6a4f", "warning": "#8b5e00", "danger": "#922b21",
+    "border": "#e5e2db", "bg3": "#f2f0ec",
 }
 
-def plot_cfg():
+def pcfg():
     return dict(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Space Grotesk", color=COLORS["text2"]),
-        margin=dict(l=10, r=10, t=30, b=10)
+        font=dict(family="Inter", color=C["muted"]),
+        margin=dict(l=10, r=10, t=36, b=10)
     )
 
 
 def render_faculty(user):
     st.markdown(f"""
-    <div class="hero-banner">
-        <div class="hero-badge">Faculty Panel</div>
-        <p class="hero-title">👩‍🏫 Welcome, {user['name']}</p>
-        <p class="hero-subtitle">Mark attendance, track class stats & generate reports</p>
+    <div class="page-header">
+        <h1>Faculty Dashboard</h1>
+        <p>Mark and manage class attendance</p>
     </div>
     """, unsafe_allow_html=True)
 
     subjects = get_faculty_subjects(user["id"])
-
     if not subjects:
-        st.warning("⚠️ No subjects assigned yet. Contact admin.")
+        st.warning("No subjects assigned yet. Contact the administrator.")
         return
 
-    tab1, tab2, tab3 = st.tabs(["✏️ Mark Attendance", "📊 Reports", "📋 Session History"])
-
-    with tab1:
-        _mark_attendance_tab(user, subjects)
-    with tab2:
-        _reports_tab(subjects)
-    with tab3:
-        _session_history_tab(subjects)
+    tab1, tab2, tab3 = st.tabs(["Mark Attendance", "Reports", "Session History"])
+    with tab1: _mark_tab(user, subjects)
+    with tab2: _reports_tab(subjects)
+    with tab3: _history_tab(subjects)
 
 
-def _mark_attendance_tab(user, subjects):
-    st.markdown("""<div class="section-header"><h3>✏️ Mark Today's Attendance</h3></div>""",
+# ── Mark Attendance ───────────────────────────
+def _mark_tab(user, subjects):
+    st.markdown("""<div class="section-header"><h3>Mark Attendance</h3></div>""",
                 unsafe_allow_html=True)
 
-    col_sel, col_form = st.columns([1, 3])
+    c_sel, c_main = st.columns([1, 3])
 
-    with col_sel:
-        sub_options = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
-        sel_sub = st.selectbox("Select Subject", sub_options)
-        sub_idx = sub_options.index(sel_sub)
-        subject = subjects[sub_idx]
-
+    with c_sel:
+        sub_opts = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
+        sel      = st.selectbox("Subject", sub_opts)
+        sub      = subjects[sub_opts.index(sel)]
         att_date = st.date_input("Date", value=date.today(), max_value=date.today())
-        topic = st.text_input("Topic / Lecture Note", placeholder="e.g. Recursion intro")
+        topic    = st.text_input("Topic", placeholder="e.g. Binary Trees")
 
-    with col_form:
+    with c_main:
         faculty_id = get_faculty_id(user["id"])
-        students = get_students_for_subject(subject["subject_id"], subject["section"])
+        students   = get_students_for_subject(sub["subject_id"], sub["section"])
 
         if not students:
-            st.warning("No students found for this subject/section.")
+            st.info("No students enrolled in this subject / section.")
             return
 
-        # Check if session already exists
-        existing_sess_id = session_exists(
-            subject["subject_id"], faculty_id, att_date.isoformat(), subject["section"]
-        )
+        existing_id = session_exists(sub["subject_id"], faculty_id,
+                                     att_date.isoformat(), sub["section"])
+        existing    = get_attendance_for_session(existing_id) if existing_id else {}
 
-        existing_records = {}
-        if existing_sess_id:
-            existing_records = get_attendance_for_session(existing_sess_id)
-            st.info(f"📝 Editing existing session for {att_date}")
+        if existing_id:
+            st.info(f"Editing existing session for {att_date}.")
 
-        st.markdown(f"**Marking attendance for {len(students)} students**")
-
-        # Build attendance form
-        status_map = {}
-        with st.form(f"att_form_{subject['subject_id']}_{att_date}"):
-            cols = st.columns([3, 2, 2, 2])
-            cols[0].markdown("**Student**")
-            cols[1].markdown("**Present**")
-            cols[2].markdown("**Absent**")
-            cols[3].markdown("**Late**")
-
-            for s in students:
-                c0, c1, c2, c3 = st.columns([3, 2, 2, 2])
-                c0.markdown(f"<div style='color:#f1f5f9;font-size:0.9rem;padding-top:0.4rem'>"
-                            f"<b>{s['roll_number']}</b> — {s['name']}</div>",
-                            unsafe_allow_html=True)
-                default = existing_records.get(s["id"], {}).get("status", "present")
-                default_idx = ["present", "absent", "late"].index(default)
-
-                val = c1.radio(f"_p_{s['id']}", ["P"], key=f"p_{s['id']}",
-                               label_visibility="collapsed")
-                status_map[s["id"]] = "present"  # placeholder, overridden by radio below
-
-            # Full width radio per student
-            st.markdown("<hr style='border-color:rgba(255,255,255,0.05)'>", unsafe_allow_html=True)
-
+        with st.form(f"att_{sub['subject_id']}_{att_date}"):
             per_student = {}
             for s in students:
-                existing_status = existing_records.get(s["id"], {}).get("status", "Present")
-                opts = ["Present", "Absent", "Late"]
-                def_idx = ["present", "absent", "late"].index(
-                    existing_records.get(s["id"], {}).get("status", "present")
-                ) if s["id"] in existing_records else 0
+                default_status = existing.get(s["id"], {}).get("status", "present")
+                default_idx    = ["present", "absent", "late"].index(default_status)
                 chosen = st.radio(
-                    f"**{s['roll_number']}** — {s['name']}",
-                    opts, index=def_idx,
+                    f"{s['roll_number']} — {s['name']}",
+                    ["Present", "Absent", "Late"],
+                    index=default_idx,
                     horizontal=True,
-                    key=f"att_{s['id']}_{subject['subject_id']}_{att_date}"
+                    key=f"att_{s['id']}_{sub['subject_id']}_{att_date}"
                 )
                 per_student[s["id"]] = chosen.lower()
 
-            submitted = st.form_submit_button("💾 Save Attendance", use_container_width=True)
+            saved = st.form_submit_button("Save Attendance", use_container_width=True)
 
-        if submitted:
-            if not existing_sess_id:
+        if saved:
+            if not existing_id:
                 sess_id = create_attendance_session(
-                    subject["subject_id"], faculty_id, att_date.isoformat(),
-                    subject["section"], topic
+                    sub["subject_id"], faculty_id,
+                    att_date.isoformat(), sub["section"], topic
                 )
             else:
-                sess_id = existing_sess_id
+                sess_id = existing_id
+                if topic:
+                    update_session_topic(sess_id, topic)
 
             for st_id, status in per_student.items():
                 mark_attendance(sess_id, st_id, status)
 
             present = sum(1 for v in per_student.values() if v == "present")
-            absent = sum(1 for v in per_student.values() if v == "absent")
-            late = sum(1 for v in per_student.values() if v == "late")
-
-            st.success(f"✅ Attendance saved! Present: {present} | Absent: {absent} | Late: {late}")
-            _mini_summary_chart(present, absent, late)
+            absent  = sum(1 for v in per_student.values() if v == "absent")
+            late    = sum(1 for v in per_student.values() if v == "late")
+            st.success(f"Attendance saved — Present: {present}, Absent: {absent}, Late: {late}")
 
 
-def _mini_summary_chart(present, absent, late):
-    fig = go.Figure(go.Pie(
-        labels=["Present", "Absent", "Late"],
-        values=[present, absent, late],
-        hole=0.65,
-        marker=dict(colors=["#10b981", "#ef4444", "#f59e0b"]),
-        textinfo="label+percent",
-        hovertemplate="%{label}: %{value}<extra></extra>"
-    ))
-    fig.update_layout(
-        **plot_cfg(), height=220,
-        title=dict(text="Today's Class Summary", font=dict(size=13, color="#f1f5f9")),
-        showlegend=False
-    )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-
+# ── Reports ───────────────────────────────────
 def _reports_tab(subjects):
-    st.markdown("""<div class="section-header"><h3>📊 Subject Attendance Report</h3></div>""",
+    st.markdown("""<div class="section-header"><h3>Attendance Reports</h3></div>""",
                 unsafe_allow_html=True)
 
-    sub_options = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
-    sel = st.selectbox("Select Subject", sub_options, key="rep_sub")
-    sub_idx = sub_options.index(sel)
-    subject = subjects[sub_idx]
+    sub_opts = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
+    sel      = st.selectbox("Subject", sub_opts, key="rep_sub")
+    sub      = subjects[sub_opts.index(sel)]
 
-    summary = get_subject_attendance_summary(subject["subject_id"], subject["section"])
-
+    summary = get_subject_attendance_summary(sub["subject_id"], sub["section"])
     if not summary:
-        st.info("No attendance data yet.")
+        st.info("No attendance data for this subject yet.")
         return
 
-    df = pd.DataFrame(summary)
+    df      = pd.DataFrame(summary)
     df["pct"] = df.apply(
-        lambda r: round(r["present"] / r["total_classes"] * 100, 1) if r["total_classes"] > 0 else 0,
+        lambda r: round(r["present"] / r["total_classes"] * 100, 1) if r["total_classes"] > 0 else 0.0,
         axis=1
     )
-    df["Status"] = df["pct"].apply(
-        lambda p: "🟢 Safe" if p >= 75 else ("🟡 Warning" if p >= 60 else "🔴 Critical")
-    )
 
-    # Summary metrics
+    # Summary row
     c1, c2, c3, c4 = st.columns(4)
-    total_classes = df["total_classes"].max() if len(df) > 0 else 0
-    avg_pct = df["pct"].mean()
-    below_75 = (df["pct"] < 75).sum()
-
-    c1.metric("Total Classes", total_classes)
-    c2.metric("Avg Attendance", f"{avg_pct:.1f}%")
+    total_cls  = int(df["total_classes"].max()) if len(df) > 0 else 0
+    avg_pct    = round(df["pct"].mean(), 1)
+    below_75   = int((df["pct"] < 75).sum())
+    c1.metric("Total Classes", total_cls)
+    c2.metric("Avg Attendance", f"{avg_pct}%")
     c3.metric("Below 75%", below_75)
-    c4.metric("Safe Students", len(df) - below_75)
+    c4.metric("Above 75%", len(df) - below_75)
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # Bar chart
+    bar_colors = [
+        C["success"] if p >= 75 else (C["warning"] if p >= 60 else C["danger"])
+        for p in df["pct"]
+    ]
     fig = go.Figure(go.Bar(
         x=df["roll_number"], y=df["pct"],
-        marker_color=[
-            COLORS["success"] if p >= 75 else (COLORS["warning"] if p >= 60 else COLORS["danger"])
-            for p in df["pct"]
-        ],
-        hovertemplate="%{x}<br><b>%{y:.1f}%</b><extra></extra>",
+        marker_color=bar_colors,
         text=[f"{p:.0f}%" for p in df["pct"]],
-        textposition="outside"
+        textposition="outside",
+        hovertemplate="%{x}<br><b>%{y:.1f}%</b><extra></extra>"
     ))
-    fig.add_hline(y=75, line_dash="dash", line_color=COLORS["warning"],
-                  annotation_text="75% Min")
-    fig.update_layout(
-        **plot_cfg(), height=320,
-        title=dict(text="Attendance % per Student", font=dict(size=14, color=COLORS["text"])),
-        yaxis=dict(range=[0, 115], ticksuffix="%", gridcolor="rgba(255,255,255,0.05)"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.05)")
-    )
+    fig.add_hline(y=75, line_dash="dash", line_color=C["warning"],
+                  annotation_text="75% minimum", annotation_font_color=C["warning"])
+    fig.update_layout(**pcfg(), height=300,
+        title=dict(text="Attendance % per Student", font=dict(size=12, color=C["text"])),
+        yaxis=dict(range=[0, 115], ticksuffix="%", gridcolor="rgba(0,0,0,0.04)"),
+        xaxis=dict(gridcolor="rgba(0,0,0,0.04)"))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # Table
-    display_df = df[["roll_number", "name", "total_classes", "present", "absent", "late", "pct", "Status"]]
-    display_df.columns = ["Roll No", "Name", "Total", "Present", "Absent", "Late", "Att %", "Status"]
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    # Table with edit — edit attendance for a specific student + date inline
+    display = df[["roll_number", "name", "total_classes", "present", "absent", "late", "pct"]].copy()
+    display.columns = ["Roll No", "Name", "Total", "Present", "Absent", "Late", "Att %"]
+    display["Att %"] = display["Att %"].apply(lambda x: f"{x}%")
+    st.dataframe(display, use_container_width=True, hide_index=True)
 
-    # Export
-    csv = display_df.to_csv(index=False)
-    st.download_button(
-        "⬇️ Download CSV Report",
-        data=csv,
-        file_name=f"attendance_{subject['code']}_sec{subject['section']}.csv",
-        mime="text/csv"
-    )
+    # Edit attendance record for a student
+    st.markdown("""<div class="section-header"><h3>Edit Attendance Record</h3></div>""",
+                unsafe_allow_html=True)
+    st.caption("Select a student and date to correct their attendance status.")
+
+    students_in_sub = get_students_for_subject(sub["subject_id"], sub["section"])
+    sessions        = get_sessions_for_subject(sub["subject_id"], sub["section"])
+
+    if not students_in_sub or not sessions:
+        st.info("No sessions to edit.")
+        return
+
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        stu_opts = ["Select student"] + [f"{s['roll_number']} — {s['name']}" for s in students_in_sub]
+        sel_stu  = st.selectbox("Student", stu_opts, key="edit_stu")
+    with ec2:
+        sess_opts = ["Select date"] + [s["date"] for s in sessions]
+        sel_sess  = st.selectbox("Session Date", sess_opts, key="edit_sess")
+
+    if sel_stu != "Select student" and sel_sess != "Select date":
+        stu_idx  = stu_opts.index(sel_stu) - 1
+        sess_idx = sess_opts.index(sel_sess) - 1
+        student  = students_in_sub[stu_idx]
+        session  = sessions[sess_idx]
+
+        existing_rec = get_attendance_for_session(session["id"])
+        current      = existing_rec.get(student["id"], {}).get("status", "present")
+        cur_idx      = ["present", "absent", "late"].index(current)
+
+        new_status = st.radio(
+            f"Status for {student['name']} on {session['date']}",
+            ["Present", "Absent", "Late"], index=cur_idx, horizontal=True, key="edit_status"
+        )
+        if st.button("Update Record", key="edit_save"):
+            mark_attendance(session["id"], student["id"], new_status.lower())
+            st.success("Record updated.")
+            st.rerun()
+
+    # Download
+    csv = display.to_csv(index=False)
+    st.download_button("Download CSV", data=csv,
+                       file_name=f"report_{sub['code']}_sec{sub['section']}.csv",
+                       mime="text/csv")
 
 
-def _session_history_tab(subjects):
-    st.markdown("""<div class="section-header"><h3>📋 Session History</h3></div>""",
+# ── Session History ───────────────────────────
+def _history_tab(subjects):
+    st.markdown("""<div class="section-header"><h3>Session History</h3></div>""",
                 unsafe_allow_html=True)
 
-    sub_options = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
-    sel = st.selectbox("Select Subject", sub_options, key="hist_sub")
-    sub_idx = sub_options.index(sel)
-    subject = subjects[sub_idx]
+    sub_opts = [f"{s['code']} — {s['name']} (Sec {s['section']})" for s in subjects]
+    sel      = st.selectbox("Subject", sub_opts, key="hist_sub")
+    sub      = subjects[sub_opts.index(sel)]
 
-    sessions = get_sessions_for_subject(subject["subject_id"], subject["section"])
-
+    sessions = get_sessions_for_subject(sub["subject_id"], sub["section"])
     if not sessions:
         st.info("No sessions held yet.")
         return
@@ -252,6 +230,23 @@ def _session_history_tab(subjects):
         lambda r: round(r["present_count"] / r["total_marked"] * 100, 1) if r["total_marked"] > 0 else 0,
         axis=1
     )
-    display = df[["date", "topic", "total_marked", "present_count", "att_pct", "faculty_name"]]
-    display.columns = ["Date", "Topic", "Total Students", "Present", "Att %", "Faculty"]
+
+    display = df[["date", "topic", "total_marked", "present_count", "att_pct", "faculty_name"]].copy()
+    display.columns = ["Date", "Topic", "Students", "Present", "Att %", "Faculty"]
+    display["Att %"] = display["Att %"].apply(lambda x: f"{x}%")
     st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # Edit topic for a session
+    st.markdown("""<div class="section-header"><h3>Edit Session Topic</h3></div>""",
+                unsafe_allow_html=True)
+    sess_opts = ["Select session"] + [f"{s['date']} — {s['topic'] or 'No topic'}" for s in sessions]
+    sel_sess  = st.selectbox("Session", sess_opts, key="edit_topic_sess")
+
+    if sel_sess != "Select session":
+        idx         = sess_opts.index(sel_sess) - 1
+        session     = sessions[idx]
+        new_topic   = st.text_input("Topic", value=session["topic"] or "", key="edit_topic_val")
+        if st.button("Update Topic", key="update_topic_btn"):
+            update_session_topic(session["id"], new_topic)
+            st.success("Topic updated.")
+            st.rerun()
