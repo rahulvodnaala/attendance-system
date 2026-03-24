@@ -9,20 +9,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-init_db()
+if "db_initialized" not in st.session_state:
+    init_db()
+    st.session_state.db_initialized = True
 
 if "user"       not in st.session_state: st.session_state.user       = None
 if "login_role" not in st.session_state: st.session_state.login_role = None   # None = show landing
-
-st.markdown(
-    """
-    <script>
-      window.scrollTo({top: 0, behavior: "instant"});
-    </script>
-    """,
-    unsafe_allow_html=True
-)
-
 
 # ══════════════════════════════════════════════
 # LANDING — 3 role cards

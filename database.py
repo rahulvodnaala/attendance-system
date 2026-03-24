@@ -164,6 +164,14 @@ def init_db():
         )
     """)
 
+    # App metadata (for one-time maintenance/migrations)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
 
     # Seed default admin if not exists
@@ -173,8 +181,16 @@ def init_db():
         _seed_demo_data(c)
         conn.commit()
     else:
-        _upgrade_demo_passwords(c)
-        conn.commit()
+        upgraded = c.execute(
+            "SELECT value FROM app_meta WHERE key='demo_passwords_upgraded'"
+        ).fetchone()
+        if not upgraded:
+            _upgrade_demo_passwords(c)
+            c.execute(
+                "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)",
+                ("demo_passwords_upgraded", "1"),
+            )
+            conn.commit()
 
     conn.close()
 
