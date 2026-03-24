@@ -274,12 +274,12 @@ def _calendar_tab(profile):
 
         cols = st.columns(min(len(day_map), 10))
         for i, (day, (color, label)) in enumerate(day_map.items()):
-            with cols[i % 10]:
+            with cols[i % len(cols)]:
                 st.markdown(
                     f"<div style='text-align:center;border:1px solid {color}55;"
                     f"border-radius:8px;padding:0.4rem 0.25rem;margin-bottom:0.3rem;"
                     f"background:{color}12'>"
-                    f"<div style='font-size:0.65rem;color:{C[\"muted\"]}'>{day}</div>"
+                    f"<div style='font-size:0.65rem;color:{C['muted']}'>{day}</div>"
                     f"<div style='font-size:0.78rem;font-weight:700;color:{color}'>{label}</div>"
                     f"</div>", unsafe_allow_html=True)
 

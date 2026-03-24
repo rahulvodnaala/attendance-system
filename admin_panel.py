@@ -5,7 +5,9 @@ from database import (
     get_overall_stats, get_all_students, get_all_faculty,
     get_departments, get_subjects, add_user, add_subject,
     assign_faculty_subject, get_connection,
-    delete_student, delete_faculty, delete_subject, delete_assignment
+    delete_student, delete_faculty, delete_subject, delete_assignment,
+    add_department, delete_department, update_department,
+    update_subject, get_audit_logs
 )
 
 C = {
@@ -33,6 +35,20 @@ def section(title, color=None):
     </div>""", unsafe_allow_html=True)
 
 
+def _confirm_action(state_key: str, message: str) -> bool:
+    st.warning(message)
+    c1, c2 = st.columns(2)
+    confirmed = False
+    with c1:
+        if st.button("Confirm", key=f"{state_key}_confirm", use_container_width=True):
+            confirmed = True
+    with c2:
+        if st.button("Cancel", key=f"{state_key}_cancel", use_container_width=True):
+            st.session_state.pop(state_key, None)
+            st.rerun()
+    return confirmed
+
+
 def render_admin():
     st.markdown("""
     <div class="page-header">
@@ -40,13 +56,16 @@ def render_admin():
         <p>System overview, student & faculty management</p>
     </div>""", unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["Overview", "Students", "Faculty", "Subjects", "Assignments"])
+    actor = st.session_state.get("user", {}).get("email", "admin")
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+        ["Overview", "Students", "Faculty", "Departments", "Subjects", "Assignments", "Audit Logs"])
     with tab1: _overview()
-    with tab2: _students()
-    with tab3: _faculty()
-    with tab4: _subjects()
-    with tab5: _assignments()
+    with tab2: _students(actor)
+    with tab3: _faculty(actor)
+    with tab4: _departments(actor)
+    with tab5: _subjects(actor)
+    with tab6: _assignments(actor)
+    with tab7: _audit_logs()
 
 
 # ── Overview ──────────────────────────────────
@@ -156,7 +175,7 @@ def _low_att_table():
 
 
 # ── Students ──────────────────────────────────
-def _students():
+def _students(actor):
     section("Students", C["student"])
     c_add, c_list = st.columns([1, 2])
 
@@ -170,7 +189,7 @@ def _students():
             dept     = st.selectbox("Department", ["Select department"] + [d["name"] for d in depts])
             semester = st.selectbox("Semester", list(range(1, 9)))
             section_ = st.selectbox("Section", ["A", "B", "C"])
-            password = st.text_input("Password")
+            password = st.text_input("Password", type="password")
             if st.form_submit_button("Add Student", use_container_width=True):
                 if dept == "Select department":
                     st.error("Please select a department.")
@@ -195,16 +214,22 @@ def _students():
             opts = ["Select student"] + [f"{s['roll_number']} — {s['name']}" for s in students]
             sel  = st.selectbox("", opts, key="del_student_sel", label_visibility="collapsed")
             if sel != "Select student":
+                target_id = students[opts.index(sel)-1]["id"]
                 if st.button("Delete Selected", key="del_student_btn"):
-                    ok, msg = delete_student(students[opts.index(sel)-1]["id"])
+                    st.session_state["pending_del_student"] = target_id
+                if st.session_state.get("pending_del_student") == target_id and _confirm_action(
+                    "pending_del_student", "This will permanently delete this student and related user records."
+                ):
+                    ok, msg = delete_student(target_id, actor=actor)
                     st.success(msg) if ok else st.error(msg)
+                    st.session_state.pop("pending_del_student", None)
                     st.rerun()
         else:
             st.info("No students added yet.")
 
 
 # ── Faculty ───────────────────────────────────
-def _faculty():
+def _faculty(actor):
     section("Faculty", C["faculty"])
     c_add, c_list = st.columns([1, 2])
 
@@ -216,7 +241,7 @@ def _faculty():
             email    = st.text_input("Email")
             emp_id   = st.text_input("Employee ID")
             dept     = st.selectbox("Department", ["Select department"] + [d["name"] for d in depts])
-            password = st.text_input("Password")
+            password = st.text_input("Password", type="password")
             if st.form_submit_button("Add Faculty", use_container_width=True):
                 if dept == "Select department":
                     st.error("Please select a department.")
@@ -239,16 +264,85 @@ def _faculty():
             opts = ["Select faculty"] + [f"{f['employee_id']} — {f['name']}" for f in faculty]
             sel  = st.selectbox("", opts, key="del_fac_sel", label_visibility="collapsed")
             if sel != "Select faculty":
+                target_id = faculty[opts.index(sel)-1]["id"]
                 if st.button("Delete Selected", key="del_fac_btn"):
-                    ok, msg = delete_faculty(faculty[opts.index(sel)-1]["id"])
+                    st.session_state["pending_del_faculty"] = target_id
+                if st.session_state.get("pending_del_faculty") == target_id and _confirm_action(
+                    "pending_del_faculty", "This will permanently delete this faculty, assignments, and linked sessions."
+                ):
+                    ok, msg = delete_faculty(target_id, actor=actor)
                     st.success(msg) if ok else st.error(msg)
+                    st.session_state.pop("pending_del_faculty", None)
                     st.rerun()
         else:
             st.info("No faculty added yet.")
 
 
 # ── Subjects ──────────────────────────────────
-def _subjects():
+def _departments(actor):
+    section("Departments", C["admin"])
+    c_add, c_list = st.columns([1, 2])
+
+    with c_add:
+        st.markdown(
+            f"<p style='font-size:0.82rem;font-weight:700;color:{C['admin']};margin-bottom:0.75rem'>Add New Department</p>",
+            unsafe_allow_html=True
+        )
+        with st.form("add_department", clear_on_submit=True):
+            name = st.text_input("Department Name")
+            code = st.text_input("Department Code")
+            if st.form_submit_button("Add Department", use_container_width=True):
+                ok, msg = add_department(name, code, actor=actor)
+                st.success(msg) if ok else st.error(msg)
+                if ok:
+                    st.rerun()
+
+    with c_list:
+        st.markdown(
+            f"<p style='font-size:0.82rem;font-weight:700;color:{C['text2']};margin-bottom:0.75rem'>All Departments</p>",
+            unsafe_allow_html=True
+        )
+        depts = get_departments()
+        if depts:
+            df = pd.DataFrame(depts)[["code", "name"]]
+            df.columns = ["Code", "Department"]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            st.markdown(
+                f"<p style='font-size:0.8rem;font-weight:600;color:{C['danger']};margin:0.75rem 0 0.3rem'>Delete Department</p>",
+                unsafe_allow_html=True
+            )
+            opts = ["Select department"] + [f"{d['code']} — {d['name']}" for d in depts]
+            sel = st.selectbox("", opts, key="del_dept_sel", label_visibility="collapsed")
+            edit_sel = st.selectbox("Edit Department", opts, key="edit_dept_sel")
+            if edit_sel != "Select department":
+                d = depts[opts.index(edit_sel) - 1]
+                with st.form("edit_department"):
+                    new_name = st.text_input("Department Name", value=d["name"])
+                    new_code = st.text_input("Department Code", value=d["code"])
+                    if st.form_submit_button("Update Department", use_container_width=True):
+                        ok, msg = update_department(d["id"], new_name, new_code, actor=actor)
+                        st.success(msg) if ok else st.error(msg)
+                        if ok:
+                            st.rerun()
+            if sel != "Select department":
+                target_id = depts[opts.index(sel) - 1]["id"]
+                if st.button("Delete Selected", key="del_dept_btn"):
+                    st.session_state["pending_del_department"] = target_id
+                if st.session_state.get("pending_del_department") == target_id and _confirm_action(
+                    "pending_del_department", "This will permanently delete this department if it is not in use."
+                ):
+                    ok, msg = delete_department(target_id, actor=actor)
+                    st.success(msg) if ok else st.error(msg)
+                    st.session_state.pop("pending_del_department", None)
+                    if ok:
+                        st.rerun()
+        else:
+            st.info("No departments added yet.")
+
+
+# ── Subjects ──────────────────────────────────
+def _subjects(actor):
     section("Subjects", "#7c3aed")
     c_add, c_list = st.columns([1, 2])
 
@@ -269,7 +363,7 @@ def _subjects():
                 else:
                     dept_id = next(d["id"] for d in depts if d["name"] == dept)
                     from database import add_subject as db_add
-                    ok, msg = db_add(name, code, dept_id, semester, credits)
+                    ok, msg = db_add(name, code, dept_id, semester, credits, actor=actor)
                     st.success(msg) if ok else st.error(msg)
 
     with c_list:
@@ -282,17 +376,41 @@ def _subjects():
             st.markdown(f"<p style='font-size:0.8rem;font-weight:600;color:{C['danger']};margin:0.75rem 0 0.3rem'>Delete Subject</p>", unsafe_allow_html=True)
             opts = ["Select subject"] + [f"{s['code']} — {s['name']}" for s in subjects]
             sel  = st.selectbox("", opts, key="del_sub_sel", label_visibility="collapsed")
+            edit_sel = st.selectbox("Edit Subject", opts, key="edit_sub_sel")
+            if edit_sel != "Select subject":
+                s = subjects[opts.index(edit_sel) - 1]
+                dept_names = [d["name"] for d in depts]
+                current_dept_name = next((d["name"] for d in depts if d["id"] == s["department_id"]), dept_names[0] if dept_names else "")
+                with st.form("edit_subject"):
+                    new_name = st.text_input("Subject Name", value=s["name"])
+                    new_code = st.text_input("Subject Code", value=s["code"])
+                    new_dept = st.selectbox("Department", dept_names, index=dept_names.index(current_dept_name) if current_dept_name in dept_names else 0)
+                    new_sem = st.selectbox("Semester", list(range(1, 9)), index=max(0, int(s["semester"]) - 1))
+                    credit_values = [1, 2, 3, 4, 5]
+                    new_credits = st.selectbox("Credits", credit_values, index=credit_values.index(s["credits"]) if s["credits"] in credit_values else 2)
+                    if st.form_submit_button("Update Subject", use_container_width=True):
+                        dept_id = next(d["id"] for d in depts if d["name"] == new_dept)
+                        ok, msg = update_subject(s["id"], new_name, new_code, dept_id, new_sem, new_credits, actor=actor)
+                        st.success(msg) if ok else st.error(msg)
+                        if ok:
+                            st.rerun()
             if sel != "Select subject":
+                target_id = subjects[opts.index(sel)-1]["id"]
                 if st.button("Delete Selected", key="del_sub_btn"):
-                    ok, msg = delete_subject(subjects[opts.index(sel)-1]["id"])
+                    st.session_state["pending_del_subject"] = target_id
+                if st.session_state.get("pending_del_subject") == target_id and _confirm_action(
+                    "pending_del_subject", "This will permanently delete this subject and all linked attendance sessions."
+                ):
+                    ok, msg = delete_subject(target_id, actor=actor)
                     st.success(msg) if ok else st.error(msg)
+                    st.session_state.pop("pending_del_subject", None)
                     st.rerun()
         else:
             st.info("No subjects added yet.")
 
 
 # ── Assignments ───────────────────────────────
-def _assignments():
+def _assignments(actor):
     section("Assign Subject to Faculty", C["admin"])
     c_form, c_cur = st.columns([1, 1])
 
@@ -315,7 +433,7 @@ def _assignments():
                 else:
                     fi = fac_opts.index(sel_fac) - 1
                     si = sub_opts.index(sel_sub) - 1
-                    ok, msg = assign_faculty_subject(faculty[fi]["id"], subjects[si]["id"], section_)
+                    ok, msg = assign_faculty_subject(faculty[fi]["id"], subjects[si]["id"], section_, actor=actor)
                     st.success("Assigned successfully.") if ok else st.error(msg)
 
     with c_cur:
@@ -339,9 +457,57 @@ def _assignments():
             opts = ["Select assignment"] + [f"{a['faculty']} / {a['code']} / Sec {a['section']}" for a in assignments]
             sel  = st.selectbox("", opts, key="del_assign_sel", label_visibility="collapsed")
             if sel != "Select assignment":
+                target_id = assignments[opts.index(sel)-1]["id"]
                 if st.button("Remove Selected", key="del_assign_btn"):
-                    ok, msg = delete_assignment(assignments[opts.index(sel)-1]["id"])
+                    st.session_state["pending_del_assignment"] = target_id
+                if st.session_state.get("pending_del_assignment") == target_id and _confirm_action(
+                    "pending_del_assignment", "This will permanently remove this faculty-subject assignment."
+                ):
+                    ok, msg = delete_assignment(target_id, actor=actor)
                     st.success(msg) if ok else st.error(msg)
+                    st.session_state.pop("pending_del_assignment", None)
                     st.rerun()
         else:
             st.info("No assignments yet.")
+
+
+def _audit_logs():
+    section("Recent Activity", C["admin"])
+    top = st.columns([1, 1, 1, 2])
+    with top[0]:
+        limit = st.selectbox("Rows", [50, 100, 200, 300, 500], index=2, key="audit_limit")
+    with top[1]:
+        action_filter = st.selectbox("Action", ["All", "create", "update", "delete"], key="audit_action")
+    with top[2]:
+        entity_filter = st.selectbox("Entity", ["All", "department", "subject", "student", "faculty", "faculty_subject"], key="audit_entity")
+    with top[3]:
+        query = st.text_input("Search (actor/details)", key="audit_query", placeholder="e.g. admin@college.edu")
+
+    logs = get_audit_logs(limit=limit)
+    if not logs:
+        st.info("No audit logs yet.")
+        return
+
+    df = pd.DataFrame(logs)
+    if action_filter != "All":
+        df = df[df["action"] == action_filter]
+    if entity_filter != "All":
+        df = df[df["entity"] == entity_filter]
+    if query:
+        q = query.strip().lower()
+        df = df[df.apply(lambda r: q in str(r["actor"]).lower() or q in str(r["details"]).lower(), axis=1)]
+
+    if df.empty:
+        st.info("No audit logs match current filters.")
+        return
+
+    df = df[["created_at", "actor", "action", "entity", "entity_id", "details"]]
+    df.columns = ["Timestamp", "Actor", "Action", "Entity", "Entity ID", "Details"]
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Download Audit CSV",
+        data=df.to_csv(index=False),
+        file_name="audit_logs.csv",
+        mime="text/csv",
+        use_container_width=True
+    )

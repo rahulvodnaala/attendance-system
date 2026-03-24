@@ -1,9 +1,19 @@
 import sqlite3
 import hashlib
-import os
-from datetime import datetime, date
+from datetime import date
+import bcrypt
 
 DB_PATH = "attendance.db"
+DEMO_PASSWORDS = {
+    "admin@college.edu": "Admin@2026#Secure",
+    "priya@college.edu": "Faculty@2026#Secure",
+    "rahul@college.edu": "Faculty@2026#Secure",
+    "arjun@student.edu": "Student@2026#Secure",
+    "sneha@student.edu": "Student@2026#Secure",
+    "rohan@student.edu": "Student@2026#Secure",
+    "divya@student.edu": "Student@2026#Secure",
+    "karan@student.edu": "Student@2026#Secure",
+}
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -12,7 +22,27 @@ def get_connection():
     return conn
 
 def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def hash_password_sha256(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def verify_password(password: str, stored_password: str) -> bool:
+    if not stored_password:
+        return False
+    if stored_password.startswith("$2a$") or stored_password.startswith("$2b$") or stored_password.startswith("$2y$"):
+        try:
+            return bcrypt.checkpw(password.encode("utf-8"), stored_password.encode("utf-8"))
+        except ValueError:
+            return False
+    # Backward compatibility for existing SHA-256 hashes.
+    return hash_password_sha256(password) == stored_password
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
 
 def init_db():
     conn = get_connection()
@@ -121,6 +151,19 @@ def init_db():
         )
     """)
 
+    # Audit trail
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor TEXT NOT NULL DEFAULT 'system',
+            action TEXT NOT NULL,
+            entity TEXT NOT NULL,
+            entity_id INTEGER,
+            details TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
 
     # Seed default admin if not exists
@@ -129,13 +172,16 @@ def init_db():
     if not existing:
         _seed_demo_data(c)
         conn.commit()
+    else:
+        _upgrade_demo_passwords(c)
+        conn.commit()
 
     conn.close()
 
 def _seed_demo_data(c):
     # Admin
     c.execute("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)",
-              ("Admin", "admin@college.edu", hash_password("admin123"), "admin"))
+              ("Admin", "admin@college.edu", hash_password(DEMO_PASSWORDS["admin@college.edu"]), "admin"))
 
     # Departments
     depts = [
@@ -151,13 +197,13 @@ def _seed_demo_data(c):
 
     # Faculty
     c.execute("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)",
-              ("Dr. Priya Sharma", "priya@college.edu", hash_password("faculty123"), "faculty"))
+              ("Dr. Priya Sharma", "priya@college.edu", hash_password(DEMO_PASSWORDS["priya@college.edu"]), "faculty"))
     fac1_uid = c.lastrowid
     c.execute("INSERT INTO faculty (user_id, employee_id, department_id) VALUES (?,?,?)",
               (fac1_uid, "FAC001", dept_cse))
 
     c.execute("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)",
-              ("Prof. Rahul Gupta", "rahul@college.edu", hash_password("faculty123"), "faculty"))
+              ("Prof. Rahul Gupta", "rahul@college.edu", hash_password(DEMO_PASSWORDS["rahul@college.edu"]), "faculty"))
     fac2_uid = c.lastrowid
     c.execute("INSERT INTO faculty (user_id, employee_id, department_id) VALUES (?,?,?)",
               (fac2_uid, "FAC002", dept_cse))
@@ -198,7 +244,7 @@ def _seed_demo_data(c):
     student_ids = []
     for name, email, roll in students_data:
         c.execute("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)",
-                  (name, email, hash_password("student123"), "student"))
+                  (name, email, hash_password(DEMO_PASSWORDS[email]), "student"))
         uid = c.lastrowid
         c.execute("INSERT INTO students (user_id, roll_number, department_id, semester, section) VALUES (?,?,?,?,?)",
                   (uid, roll, dept_cse, 4, "A"))
@@ -223,28 +269,57 @@ def _seed_demo_data(c):
                               (sess_id, st_id, status))
 
 
+def _upgrade_demo_passwords(c):
+    # Upgrade known weak demo passwords to stronger defaults once.
+    legacy_map = {
+        "admin@college.edu": "admin123",
+        "priya@college.edu": "faculty123",
+        "rahul@college.edu": "faculty123",
+        "arjun@student.edu": "student123",
+        "sneha@student.edu": "student123",
+        "rohan@student.edu": "student123",
+        "divya@student.edu": "student123",
+        "karan@student.edu": "student123",
+    }
+    for email, legacy_plain in legacy_map.items():
+        row = c.execute("SELECT id, password FROM users WHERE email=?", (email,)).fetchone()
+        if not row:
+            continue
+        stored = row["password"]
+        if verify_password(DEMO_PASSWORDS[email], stored):
+            continue
+        if verify_password(legacy_plain, stored):
+            c.execute("UPDATE users SET password=? WHERE id=?", (hash_password(DEMO_PASSWORDS[email]), row["id"]))
+
+
 # ──────────────────────────────────────────────────────
 # Query helpers
 # ──────────────────────────────────────────────────────
 
 def authenticate(email: str, password: str):
     conn = get_connection()
-    user = conn.execute(
-        "SELECT * FROM users WHERE email=? AND password=?",
-        (email, hash_password(password))
-    ).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE email=?", (normalize_email(email),)).fetchone()
+    if user and verify_password(password, user["password"]):
+        # Transparent migration from legacy SHA-256 to bcrypt.
+        if not user["password"].startswith("$2"):
+            conn.execute("UPDATE users SET password=? WHERE id=?", (hash_password(password), user["id"]))
+            conn.commit()
+        conn.close()
+        return dict(user)
     conn.close()
-    return dict(user) if user else None
+    return None
 
 def get_all_students(dept_id=None):
     conn = get_connection()
     q = """SELECT s.id, u.name, u.email, s.roll_number, d.name as dept, s.semester, s.section
            FROM students s JOIN users u ON s.user_id=u.id
            JOIN departments d ON s.department_id=d.id"""
+    params = []
     if dept_id:
-        q += f" WHERE s.department_id={dept_id}"
+        q += " WHERE s.department_id=?"
+        params.append(dept_id)
     q += " ORDER BY s.roll_number"
-    rows = [dict(r) for r in conn.execute(q).fetchall()]
+    rows = [dict(r) for r in conn.execute(q, params).fetchall()]
     conn.close()
     return rows
 
@@ -263,6 +338,95 @@ def get_departments():
     rows = conn.execute("SELECT * FROM departments ORDER BY name").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def log_audit(action, entity, entity_id=None, details="", actor="system"):
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO audit_logs (actor, action, entity, entity_id, details)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (actor or "system", action, entity, entity_id, details),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_department(name, code, actor="system"):
+    conn = get_connection()
+    try:
+        clean_name = (name or "").strip()
+        clean_code = (code or "").strip().upper()
+        if not clean_name or not clean_code:
+            return False, "Department name and code are required"
+        c = conn.cursor()
+        c.execute("INSERT INTO departments (name, code) VALUES (?, ?)", (clean_name, clean_code))
+        new_id = c.lastrowid
+        conn.commit()
+        log_audit("create", "department", new_id, f"{clean_code} - {clean_name}", actor)
+        return True, "Department added successfully"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def update_department(department_id, name, code, actor="system"):
+    conn = get_connection()
+    try:
+        clean_name = (name or "").strip()
+        clean_code = (code or "").strip().upper()
+        if not clean_name or not clean_code:
+            return False, "Department name and code are required"
+        existing = conn.execute("SELECT id FROM departments WHERE id=?", (department_id,)).fetchone()
+        if not existing:
+            return False, "Department not found"
+        conn.execute(
+            "UPDATE departments SET name=?, code=? WHERE id=?",
+            (clean_name, clean_code, department_id),
+        )
+        conn.commit()
+        log_audit("update", "department", department_id, f"{clean_code} - {clean_name}", actor)
+        return True, "Department updated successfully"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def delete_department(department_id, actor="system"):
+    conn = get_connection()
+    try:
+        dept = conn.execute("SELECT code, name FROM departments WHERE id=?", (department_id,)).fetchone()
+        if not dept:
+            return False, "Department not found"
+        students_count = conn.execute(
+            "SELECT COUNT(*) FROM students WHERE department_id=?", (department_id,)
+        ).fetchone()[0]
+        faculty_count = conn.execute(
+            "SELECT COUNT(*) FROM faculty WHERE department_id=?", (department_id,)
+        ).fetchone()[0]
+        subjects_count = conn.execute(
+            "SELECT COUNT(*) FROM subjects WHERE department_id=?", (department_id,)
+        ).fetchone()[0]
+
+        if students_count or faculty_count or subjects_count:
+            return False, "Cannot delete: department is in use by students/faculty/subjects."
+
+        conn.execute("DELETE FROM departments WHERE id=?", (department_id,))
+        conn.commit()
+        log_audit("delete", "department", department_id, f"{dept['code']} - {dept['name']}", actor)
+        return True, "Department deleted successfully"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
 
 def get_subjects(dept_id=None, semester=None):
     conn = get_connection()
@@ -453,15 +617,34 @@ def add_user(name, email, password, role, extra=None):
     conn = get_connection()
     c = conn.cursor()
     try:
+        clean_name = (name or "").strip()
+        clean_email = normalize_email(email)
+        clean_password = password or ""
+        if role not in {"admin", "faculty", "student"}:
+            return False, "Invalid role"
+        if not clean_name or not clean_email or not clean_password:
+            return False, "Name, email and password are required"
+
         c.execute("INSERT INTO users (name, email, password, role) VALUES (?,?,?,?)",
-                  (name, email, hash_password(password), role))
+                  (clean_name, clean_email, hash_password(clean_password), role))
         uid = c.lastrowid
         if role == "student" and extra:
+            required = {"roll", "dept_id", "semester"}
+            if not required.issubset(set(extra.keys())):
+                conn.rollback()
+                return False, "Missing student profile fields"
             c.execute("INSERT INTO students (user_id, roll_number, department_id, semester, section) VALUES (?,?,?,?,?)",
                       (uid, extra["roll"], extra["dept_id"], extra["semester"], extra.get("section", "A")))
         elif role == "faculty" and extra:
+            required = {"emp_id", "dept_id"}
+            if not required.issubset(set(extra.keys())):
+                conn.rollback()
+                return False, "Missing faculty profile fields"
             c.execute("INSERT INTO faculty (user_id, employee_id, department_id) VALUES (?,?,?)",
                       (uid, extra["emp_id"], extra["dept_id"]))
+        elif role in {"student", "faculty"}:
+            conn.rollback()
+            return False, f"Missing profile details for {role}"
         conn.commit()
         return True, "User added successfully"
     except Exception as e:
@@ -470,40 +653,78 @@ def add_user(name, email, password, role, extra=None):
     finally:
         conn.close()
 
-def add_subject(name, code, dept_id, semester, credits):
+def add_subject(name, code, dept_id, semester, credits, actor="system"):
     conn = get_connection()
     try:
-        conn.execute("INSERT INTO subjects (name, code, department_id, semester, credits) VALUES (?,?,?,?,?)",
-                     (name, code, dept_id, semester, credits))
+        clean_name = (name or "").strip()
+        clean_code = (code or "").strip().upper()
+        if not clean_name or not clean_code:
+            return False, "Subject name and code are required"
+        c = conn.cursor()
+        c.execute("INSERT INTO subjects (name, code, department_id, semester, credits) VALUES (?,?,?,?,?)",
+                  (clean_name, clean_code, dept_id, semester, credits))
+        new_id = c.lastrowid
         conn.commit()
+        log_audit("create", "subject", new_id, f"{clean_code} - {clean_name}", actor)
         return True, "Subject added"
     except Exception as e:
         return False, str(e)
     finally:
         conn.close()
 
-def assign_faculty_subject(faculty_id, subject_id, section):
+
+def update_subject(subject_id, name, code, dept_id, semester, credits, actor="system"):
+    conn = get_connection()
+    try:
+        clean_name = (name or "").strip()
+        clean_code = (code or "").strip().upper()
+        if not clean_name or not clean_code:
+            return False, "Subject name and code are required"
+        existing = conn.execute("SELECT id FROM subjects WHERE id=?", (subject_id,)).fetchone()
+        if not existing:
+            return False, "Subject not found"
+        conn.execute(
+            """
+            UPDATE subjects
+            SET name=?, code=?, department_id=?, semester=?, credits=?
+            WHERE id=?
+            """,
+            (clean_name, clean_code, dept_id, semester, credits, subject_id),
+        )
+        conn.commit()
+        log_audit("update", "subject", subject_id, f"{clean_code} - {clean_name}", actor)
+        return True, "Subject updated"
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+def assign_faculty_subject(faculty_id, subject_id, section, actor="system"):
     conn = get_connection()
     try:
         conn.execute("INSERT OR IGNORE INTO faculty_subjects (faculty_id, subject_id, section) VALUES (?,?,?)",
                      (faculty_id, subject_id, section))
         conn.commit()
+        log_audit("create", "faculty_subject", None, f"faculty_id={faculty_id}, subject_id={subject_id}, section={section}", actor)
         return True, "Assigned"
     except Exception as e:
         return False, str(e)
     finally:
         conn.close()
 
-def delete_student(student_id):
+def delete_student(student_id, actor="system"):
     conn = get_connection()
     try:
         # Delete attendance records first
         conn.execute("""DELETE FROM attendance WHERE student_id=?""", (student_id,))
         user_id = conn.execute("SELECT user_id FROM students WHERE id=?", (student_id,)).fetchone()
+        row = conn.execute("SELECT roll_number FROM students WHERE id=?", (student_id,)).fetchone()
         conn.execute("DELETE FROM students WHERE id=?", (student_id,))
         if user_id:
             conn.execute("DELETE FROM users WHERE id=?", (user_id[0],))
         conn.commit()
+        log_audit("delete", "student", student_id, f"roll={row['roll_number'] if row else ''}", actor)
         return True, "Student deleted"
     except Exception as e:
         conn.rollback()
@@ -511,15 +732,22 @@ def delete_student(student_id):
     finally:
         conn.close()
 
-def delete_faculty(faculty_id):
+def delete_faculty(faculty_id, actor="system"):
     conn = get_connection()
     try:
+        # Remove attendance tied to this faculty's sessions before deleting sessions.
+        sessions = conn.execute("SELECT id FROM attendance_sessions WHERE faculty_id=?", (faculty_id,)).fetchall()
+        for s in sessions:
+            conn.execute("DELETE FROM attendance WHERE session_id=?", (s[0],))
+        conn.execute("DELETE FROM attendance_sessions WHERE faculty_id=?", (faculty_id,))
         conn.execute("DELETE FROM faculty_subjects WHERE faculty_id=?", (faculty_id,))
         user_id = conn.execute("SELECT user_id FROM faculty WHERE id=?", (faculty_id,)).fetchone()
+        row = conn.execute("SELECT employee_id FROM faculty WHERE id=?", (faculty_id,)).fetchone()
         conn.execute("DELETE FROM faculty WHERE id=?", (faculty_id,))
         if user_id:
             conn.execute("DELETE FROM users WHERE id=?", (user_id[0],))
         conn.commit()
+        log_audit("delete", "faculty", faculty_id, f"employee_id={row['employee_id'] if row else ''}", actor)
         return True, "Faculty deleted"
     except Exception as e:
         conn.rollback()
@@ -527,9 +755,10 @@ def delete_faculty(faculty_id):
     finally:
         conn.close()
 
-def delete_subject(subject_id):
+def delete_subject(subject_id, actor="system"):
     conn = get_connection()
     try:
+        row = conn.execute("SELECT code, name FROM subjects WHERE id=?", (subject_id,)).fetchone()
         conn.execute("DELETE FROM faculty_subjects WHERE subject_id=?", (subject_id,))
         # delete attendance for sessions of this subject
         sessions = conn.execute("SELECT id FROM attendance_sessions WHERE subject_id=?", (subject_id,)).fetchall()
@@ -538,6 +767,7 @@ def delete_subject(subject_id):
         conn.execute("DELETE FROM attendance_sessions WHERE subject_id=?", (subject_id,))
         conn.execute("DELETE FROM subjects WHERE id=?", (subject_id,))
         conn.commit()
+        log_audit("delete", "subject", subject_id, f"{row['code']} - {row['name']}" if row else "", actor)
         return True, "Subject deleted"
     except Exception as e:
         conn.rollback()
@@ -545,11 +775,12 @@ def delete_subject(subject_id):
     finally:
         conn.close()
 
-def delete_assignment(fs_id):
+def delete_assignment(fs_id, actor="system"):
     conn = get_connection()
     try:
         conn.execute("DELETE FROM faculty_subjects WHERE id=?", (fs_id,))
         conn.commit()
+        log_audit("delete", "faculty_subject", fs_id, "Assignment removed", actor)
         return True, "Assignment removed"
     except Exception as e:
         return False, str(e)
@@ -571,5 +802,20 @@ def get_student_detailed_attendance(student_id, subject_id):
         WHERE sess.subject_id=?
         ORDER BY sess.date DESC
     """, (student_id, subject_id)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_audit_logs(limit=200):
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT id, actor, action, entity, entity_id, details, created_at
+        FROM audit_logs
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

@@ -14,11 +14,36 @@ init_db()
 if "user"       not in st.session_state: st.session_state.user       = None
 if "login_role" not in st.session_state: st.session_state.login_role = None   # None = show landing
 
+st.markdown(
+    """
+    <script>
+      window.scrollTo({top: 0, behavior: "instant"});
+    </script>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # ══════════════════════════════════════════════
 # LANDING — 3 role cards
 # ══════════════════════════════════════════════
 def show_landing():
+    st.markdown(
+        """
+        <style>
+        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+            overflow: hidden !important;
+        }
+        .main .block-container {
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            max-height: 100vh !important;
+            overflow: hidden !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown('<div class="landing-outer">', unsafe_allow_html=True)
 
     # Logo + heading
@@ -85,12 +110,23 @@ ROLE_META = {
 }
 
 def show_login(role: str):
+    st.markdown(
+        """
+        <style>
+        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+            overflow: hidden !important;
+        }
+        .main .block-container {
+            max-height: 100vh !important;
+            overflow: hidden !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
     m = ROLE_META[role]
     _, col, _ = st.columns([1, 1.1, 1])
     with col:
-        st.markdown('<div class="login-outer">', unsafe_allow_html=True)
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-
         # Back button
         if st.button("← Back", key="back_btn"):
             st.session_state.login_role = None
@@ -126,8 +162,6 @@ def show_login(role: str):
                 else:
                     st.error("Invalid email or password. Please try again.")
 
-        st.markdown('</div></div>', unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════
 # TOP NAV (when logged in)
@@ -159,6 +193,20 @@ def render_topnav(user):
 # ══════════════════════════════════════════════
 def main():
     user = st.session_state.user
+    st.markdown(
+        """
+        <style>
+        html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+            overflow-y: auto !important;
+        }
+        .main .block-container {
+            max-height: none !important;
+            overflow: visible !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     # Logged in → show dashboard
     if user:

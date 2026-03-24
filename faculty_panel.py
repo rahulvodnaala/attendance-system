@@ -66,6 +66,9 @@ def _mark_tab(user, subjects):
 
     with c_main:
         faculty_id  = get_faculty_id(user["id"])
+        if faculty_id is None:
+            st.error("Faculty profile not found. Please contact the administrator.")
+            return
         students    = get_students_for_subject(sub["subject_id"], sub["section"])
 
         if not students:
@@ -89,16 +92,37 @@ def _mark_tab(user, subjects):
             <span style="font-size:0.8rem;color:{C['muted']}">{len(students)} students</span>
         </div>""", unsafe_allow_html=True)
 
+        action_cols = st.columns(4)
+        if action_cols[0].button("All Present", use_container_width=True, key=f"bulk_present_{sub['subject_id']}_{att_date}"):
+            for s in students:
+                st.session_state[f"att_{s['id']}_{sub['subject_id']}_{att_date}"] = "Present"
+            st.rerun()
+        if action_cols[1].button("All Absent", use_container_width=True, key=f"bulk_absent_{sub['subject_id']}_{att_date}"):
+            for s in students:
+                st.session_state[f"att_{s['id']}_{sub['subject_id']}_{att_date}"] = "Absent"
+            st.rerun()
+        if action_cols[2].button("All Late", use_container_width=True, key=f"bulk_late_{sub['subject_id']}_{att_date}"):
+            for s in students:
+                st.session_state[f"att_{s['id']}_{sub['subject_id']}_{att_date}"] = "Late"
+            st.rerun()
+        if action_cols[3].button("Use Previous", use_container_width=True, key=f"bulk_previous_{sub['subject_id']}_{att_date}"):
+            for s in students:
+                status = existing.get(s["id"], {}).get("status", "present").capitalize()
+                st.session_state[f"att_{s['id']}_{sub['subject_id']}_{att_date}"] = status
+            st.rerun()
+
         with st.form(f"att_{sub['subject_id']}_{att_date}"):
             per_student = {}
             for s in students:
                 default     = existing.get(s["id"], {}).get("status", "present")
-                default_idx = ["present", "absent", "late"].index(default)
+                radio_key = f"att_{s['id']}_{sub['subject_id']}_{att_date}"
+                current_ui = st.session_state.get(radio_key, default.capitalize())
+                default_idx = ["Present", "Absent", "Late"].index(current_ui) if current_ui in ["Present", "Absent", "Late"] else ["present", "absent", "late"].index(default)
                 chosen = st.radio(
                     f"**{s['roll_number']}** — {s['name']}",
                     ["Present", "Absent", "Late"],
                     index=default_idx, horizontal=True,
-                    key=f"att_{s['id']}_{sub['subject_id']}_{att_date}"
+                    key=radio_key
                 )
                 per_student[s["id"]] = chosen.lower()
 

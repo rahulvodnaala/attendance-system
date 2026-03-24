@@ -48,14 +48,24 @@ CUSTOM_CSS = """
 
 * { box-sizing: border-box; }
 .stApp { background: var(--bg) !important; font-family: 'Inter', sans-serif !important; }
-.main .block-container { padding: 0 2.5rem 4rem !important; max-width: 1350px !important; }
+.main .block-container { padding: 0.5rem 2rem 1.25rem !important; max-width: 1350px !important; }
 #MainMenu, footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 section[data-testid="stSidebar"] { display: none !important; }
 h1,h2,h3,h4,h5,h6 { font-family:'Sora',sans-serif !important; color:var(--text) !important; }
 
 /* ── Landing ── */
-.landing-outer { min-height:90vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:2rem 1rem; }
+.landing-outer {
+    position: fixed;
+    inset: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem 1rem;
+    overflow: hidden;
+}
 .landing-logo-box { width:52px; height:52px; background:var(--admin-grad); border-radius:15px; display:flex; align-items:center; justify-content:center; margin:0 auto 1.5rem; box-shadow:0 8px 24px rgba(79,70,229,0.3); }
 .landing-title { font-family:'Sora',sans-serif; font-size:1.9rem; font-weight:800; color:var(--text) !important; text-align:center; margin:0 0 0.45rem; letter-spacing:-0.04em; line-height:1.2; }
 .landing-sub { font-size:0.9rem; color:var(--muted) !important; text-align:center; margin:0 0 2.75rem; }
@@ -85,7 +95,16 @@ h1,h2,h3,h4,h5,h6 { font-family:'Sora',sans-serif !important; color:var(--text) 
 .role-btn-student { background:var(--student-grad); box-shadow:0 4px 16px rgba(5,150,105,0.38); }
 
 /* ── Login ── */
-.login-outer { min-height:88vh; display:flex; align-items:center; justify-content:center; }
+.login-outer {
+    position: fixed;
+    inset: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 0.5rem 0.9rem;
+}
 .login-card { background:var(--card); border:1px solid var(--border); border-radius:20px; padding:2.75rem 2.5rem; width:100%; box-shadow:var(--shadow-lg); }
 .login-role-banner { border-radius:14px; padding:1.1rem 1.4rem; margin-bottom:1.75rem; display:flex; align-items:center; gap:1rem; }
 .login-banner-admin   { background:var(--admin-light);   border:1px solid var(--admin-mid); }

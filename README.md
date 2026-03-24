@@ -21,11 +21,11 @@ streamlit run app.py
 
 | Role    | Email                    | Password     |
 |---------|--------------------------|--------------|
-| Admin   | admin@college.edu        | admin123     |
-| Faculty | priya@college.edu        | faculty123   |
-| Faculty | rahul@college.edu        | faculty123   |
-| Student | arjun@student.edu        | student123   |
-| Student | sneha@student.edu        | student123   |
+| Admin   | admin@college.edu        | Admin@2026#Secure     |
+| Faculty | priya@college.edu        | Faculty@2026#Secure   |
+| Faculty | rahul@college.edu        | Faculty@2026#Secure   |
+| Student | arjun@student.edu        | Student@2026#Secure   |
+| Student | sneha@student.edu        | Student@2026#Secure   |
 
 ---
 
@@ -144,7 +144,7 @@ Add to requirements: `google-generativeai`
 | **SQLite** | Lightweight database |
 | **Pandas** | Data manipulation |
 | **Plotly** | Interactive charts |
-| **Python hashlib** | Password hashing |
+| **bcrypt** | Strong password hashing |
 | **Gemini API** (optional) | AI insights |
 
 ---
